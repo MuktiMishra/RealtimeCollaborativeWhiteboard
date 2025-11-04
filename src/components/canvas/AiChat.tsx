@@ -46,7 +46,7 @@ export default function AiChat() {
     }
 
     return (
-        <div className='absolute top-0 right-0 m-3'>
+        <div className='absolute bottom-0 right-0 m-3'>
             <Sheet>
                 <SheetTrigger asChild>
                     <Button variant='outline'><MessageCircle /></Button>
