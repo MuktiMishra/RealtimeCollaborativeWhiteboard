@@ -491,7 +491,7 @@ const Canvas = ({roomId}: {roomId: string}) => {
     const handleOffer = async (from: string, offer: RTCSessionDescriptionInit) => {
         console.log('Handling offer from:', from)
         
-        let peerConnection = peerConnectionsRef.current.get(from)
+        let peerConnection: RTCPeerConnection | null | undefined = peerConnectionsRef.current.get(from)
         const offerCollision = makingOfferRef.current.has(from) && 
                               peerConnection?.signalingState !== 'stable'
         

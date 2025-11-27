@@ -5,17 +5,19 @@ import { prisma } from '@/lib/prisma'
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { roomId: string } }
+  { params }: { params: Promise<{ roomId: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions)
+
+    const { roomId } = await params; 
 
     if (!session?.user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const room = await prisma.room.findUnique({
-      where: { id: params.roomId },
+      where: { id: roomId },
       include: {
         owner: {
           select: {
@@ -54,7 +56,7 @@ export async function GET(
     }
 
     await prisma.room.update({
-      where: { id: params.roomId },
+      where: { id: roomId },
       data: { lastAccessed: new Date() },
     })
 
@@ -67,7 +69,7 @@ export async function GET(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { roomId: string } }
+  { params }: { params: Promise<{ roomId: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions)
@@ -75,9 +77,9 @@ export async function DELETE(
     if (!session?.user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
-
+    const { roomId } = await params; 
     const room = await prisma.room.findUnique({
-      where: { id: params.roomId },
+      where: { id: roomId },
     })
 
     if (!room) {
@@ -89,7 +91,7 @@ export async function DELETE(
     }
 
     await prisma.room.delete({
-      where: { id: params.roomId },
+      where: { id: roomId },
     })
 
     return NextResponse.json({ success: true })
@@ -101,7 +103,7 @@ export async function DELETE(
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { roomId: string } }
+  { params }: { params: Promise<{ roomId: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions)
@@ -109,12 +111,12 @@ export async function PATCH(
     if (!session?.user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
-
+    const { roomId } = await params ; 
     const body = await request.json()
     const { name } = body
 
     const room = await prisma.room.findUnique({
-      where: { id: params.roomId },
+      where: { id: roomId },
     })
 
     if (!room) {
@@ -126,7 +128,7 @@ export async function PATCH(
     }
 
     const updatedRoom = await prisma.room.update({
-      where: { id: params.roomId },
+      where: { id: roomId },
       data: { name },
     })
 
