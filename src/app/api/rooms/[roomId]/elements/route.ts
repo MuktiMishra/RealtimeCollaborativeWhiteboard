@@ -68,9 +68,11 @@ export async function POST(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { roomId } = params
+    const { roomId } = await params; 
     const body = await request.json()
-    const { elements } = body
+    console.log("body:", body)
+    const { elements, text } = body; 
+
 
     const room = await prisma.room.findFirst({
       where: {
@@ -107,9 +109,11 @@ export async function POST(
       })),
     })
 
+    // console.log("reciving following text: ", text); 
+
     await prisma.room.update({
       where: { id: roomId },
-      data: { lastAccessed: new Date() },
+      data: { lastAccessed: new Date(), notes: text },
     })
 
     return NextResponse.json({ 

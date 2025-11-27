@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { FaPencilAlt, FaEraser } from "react-icons/fa"
 import { IoText } from "react-icons/io5";
 import { RiRectangleLine } from "react-icons/ri"; 
-import { Circle } from "lucide-react";
+import { ArrowBigLeft, Circle } from "lucide-react";
 
 export default function Toolbar() {
     const { selectedTool, setSelectedTool } = useToolStore(); 
@@ -19,7 +19,8 @@ export default function Toolbar() {
         {icon: <FaEraser />, name: "eraser"}, 
         {icon: <IoText />, name: "text"}, 
         {icon: <RiRectangleLine />, name: 'rectangle'}, 
-        {icon: <Circle />, name: 'circle'}
+        {icon: <Circle />, name: 'circle'},
+        {icon: <ArrowBigLeft/>, name: 'arrow'}
     ]
 
     return (

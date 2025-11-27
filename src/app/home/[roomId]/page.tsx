@@ -9,7 +9,6 @@ export default async function({params}: {params: Promise<{ roomId: string }>}) {
 
     return (
         <div className="flex flex-row w-full h-screen gap-4">
-            <SimpleVoiceChat roomId={roomId}/>
             <Canvas roomId={roomId}/>
             <AiChat />
         </div>

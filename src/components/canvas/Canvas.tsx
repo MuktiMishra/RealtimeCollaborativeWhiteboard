@@ -1,6 +1,6 @@
 'use client'
 
-import { Stage, Layer, Line, Rect, Circle } from 'react-konva'
+import { Stage, Layer, Line, Rect, Circle, Arrow } from 'react-konva'
 import Toolbar from './Toolbar';
 import { useCurrentShapeStore, useToolStore } from '@/store/toolStore';
 import { MdCopyAll, MdCheck, MdVideocam, MdVideocamOff, MdMic, MdMicOff, MdScreenShare, MdStopScreenShare } from "react-icons/md";
@@ -10,6 +10,8 @@ import { WebsocketProvider } from 'y-websocket';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from "motion/react";
+import { RiArchiveDrawerFill } from 'react-icons/ri';
+import TextElement from './TextElement';
 
 interface elementSchema {
     tool: string, 
@@ -45,8 +47,10 @@ const Canvas = ({roomId}: {roomId: string}) => {
     const [copied, setCopied] = useState(false)
     const [isSaving, setIsSaving] = useState(false)
     const [lastSaved, setLastSaved] = useState<Date | null>(null)
-    
-    // Video/Audio states - Discord style
+    const [isTextElementVisible, setIsTextElementVisible] = useState(false); 
+    const [textElemValue, setTextElemValue] = useState(""); 
+    const textToSend = useRef(""); 
+
     const [isVideoEnabled, setIsVideoEnabled] = useState(false)
     const [isAudioEnabled, setIsAudioEnabled] = useState(false)
     const [isScreenSharing, setIsScreenSharing] = useState(false)
@@ -60,6 +64,7 @@ const Canvas = ({roomId}: {roomId: string}) => {
     const providerRef = useRef<WebsocketProvider | null>(null)
     const yElementsRef = useRef<Y.Array<elementSchema> | null>(null)
     const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+    const stageRef = useRef(null); 
     
     // WebRTC refs - Fixed version
     const localStreamRef = useRef<MediaStream | null>(null)
@@ -81,6 +86,15 @@ const Canvas = ({roomId}: {roomId: string}) => {
         ],
         iceCandidatePoolSize: 10
     }
+
+    useEffect(() => {
+        
+    }, [])
+
+    useEffect(() => {
+        console.log("text value: ", textElemValue)
+        textToSend.current = textElemValue; 
+    }, [textElemValue])
 
     useEffect(() => {
         if (status === 'unauthenticated') {
@@ -106,7 +120,9 @@ const Canvas = ({roomId}: {roomId: string}) => {
             const response = await fetch(`/api/rooms/${roomId}`)
             if (response.ok) {
                 const data = await response.json()
+                console.log("data: ", data)
                 setRoomInfo(data)
+                setTextElemValue(data.notes); 
             }
         } catch (error) {
             console.error('Failed to fetch room info:', error)
@@ -130,14 +146,16 @@ const Canvas = ({roomId}: {roomId: string}) => {
     }
 
     const saveElementsToDB = async (elementsToSave: elementSchema[]) => {
+
         try {
+            console.log("text to send: ", textToSend)
             setIsSaving(true)
             const response = await fetch(`/api/rooms/${roomId}/elements`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ elements: elementsToSave }),
+                body: JSON.stringify({ elements: elementsToSave, text: textToSend.current.toString() }),
             })
 
             if (response.ok) {
@@ -190,9 +208,10 @@ const Canvas = ({roomId}: {roomId: string}) => {
         signalingRef.current = ySignaling
 
         const updateElements = () => {
+            console.log("came here broski")
             const currentElements = yElements.toArray()
             setElements([...currentElements])
-            
+
             if (currentElements.length > 0) {
                 debouncedSave(currentElements)
             }
@@ -828,6 +847,23 @@ const Canvas = ({roomId}: {roomId: string}) => {
                 handleAddElement({tool: selectedTool, props})
                 break;
             }
+            case 'arrow': {
+                const point = e.target.getStage().getPointerPosition(); 
+                const elementId= `${myUserIdRef.current}-${Date.now()}`; 
+                const props = { id: elementId, x: point.x / 20, y: point.y / 20, points: [point.x, point.y, point.x, point.y],       
+                    stroke: 'black',
+                    fill: 'black', 
+                    strokeWidth: 10,
+                pointerLength: 15,
+                pointerWidth: 15, }
+                isShapeDrawing.current = true; 
+
+                console.log("arrow props:", props)
+
+                handleAddElement({tool: selectedTool, props}); 
+                
+                break; 
+            }
         }   
     }
 
@@ -961,6 +997,40 @@ const Canvas = ({roomId}: {roomId: string}) => {
                 })
                 break; 
             }
+            case 'arrow': {
+                if (!isShapeDrawing.current) return; 
+
+                const pointer = e.target.getStage().getPointerPosition(); 
+
+                let lastIndex = -1; 
+                for (let i = yElements.length - 1; i >= 0; i--) {
+                    if (yElements.get(i).tool === 'arrow' && 
+                        yElements.get(i).props.id.startsWith(myUserIdRef.current)) {
+                        lastIndex = i;
+                        break;
+                    }
+                }
+
+                if (lastIndex === -1) return;
+
+                let lastArrow = yElements.get(lastIndex); 
+                console.log(lastArrow.props.points[0])
+                const updateElement = {
+                    ...lastArrow, 
+                    props: {
+                        ...lastArrow.props, 
+                        points: [lastArrow.props.points[0], lastArrow.props.points[1], pointer.x, pointer.y]
+                    }
+                }
+
+                console.log(updateElement)
+                yElements.doc?.transact(() => {
+                    yElements.delete(lastIndex); 
+                    yElements.insert(lastIndex, [updateElement])
+                })
+                break; 
+
+            }
             default: return; 
         }
     }
@@ -1011,11 +1081,16 @@ const Canvas = ({roomId}: {roomId: string}) => {
     return (
         <div className="relative h-screen overflow-hidden bg-gray-50">
             {/* Header */}
-            <div className="absolute top-0 left-0 right-0 z-20 bg-white/95 backdrop-blur-sm shadow-md">
+
+            {isTextElementVisible && <TextElement value={textElemValue} valueRef={textToSend} setValue={setTextElemValue} stageRef={stageRef} isVisible={isTextElementVisible} />}
+            <div className={`absolute ${isTextElementVisible ? "ml-95" : "ml-0"} transition-all duration-100 ease-linear top-0 left-0 right-0 z-20 bg-white/95 backdrop-blur-sm shadow-md`}>
                 <div className="flex justify-between items-center px-6 py-3">
                     {/* Room Info */}
                     <div className="flex items-center gap-4">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 ">
+                            <button onClick={() => {setIsTextElementVisible(prev => !prev)}} className='w-10 h-10 hover:bg-gray-100/50 flex items-center justify-center'>
+                                <RiArchiveDrawerFill />
+                            </button>
                             <h2 className="text-lg font-semibold text-gray-800">
                                 {roomInfo?.name || 'Untitled Whiteboard'}
                             </h2>
@@ -1242,13 +1317,15 @@ const Canvas = ({roomId}: {roomId: string}) => {
             </motion.div>
 
             {/* Canvas */}
-            <div className="pt-20">
+            <div className={`pt-20 ${isTextElementVisible ? "ml-40" : "ml-0"} transition-all duration-100 ease-linear`}>
                 <Stage 
                     onMouseUp={handleMouseUp} 
                     onMouseMove={handleMouseMove} 
                     onMouseDown={handleMouseDown} 
                     width={dimensions.width} 
                     height={dimensions.height}
+                    
+                    ref={stageRef}
                 >
                     <Layer>
                         {elements.map((item, i) => {
@@ -1286,6 +1363,18 @@ const Canvas = ({roomId}: {roomId: string}) => {
                                         y={item.props.y}
                                         radius={item.props.radius}
                                         stroke={item.props.stroke}
+                                    />
+                                }
+                                case 'arrow': {
+                                    return <Arrow 
+                                    key={i}
+                                    id={item.props.id}
+                                    x={item.props.x}
+                                    y={item.props.y}
+                                    stroke={item.props.stroke}
+                                    pointerWidth={item.props.pointerWidth}
+                                    pointerLength={item.props.pointerLength}
+                                    points={item.props.points}
                                     />
                                 }
                             }
