@@ -1,10 +1,10 @@
 'use client'
 
-import { Stage, Layer, Line, Rect, Circle, Arrow } from 'react-konva'
+import { Stage, Layer, Line, Rect, Circle, Arrow, Text, Transformer } from 'react-konva'
 import Toolbar from './Toolbar';
 import { useCurrentShapeStore, useToolStore } from '@/store/toolStore';
 import { MdCopyAll, MdCheck, MdVideocam, MdVideocamOff, MdMic, MdMicOff, MdScreenShare, MdStopScreenShare } from "react-icons/md";
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import * as Y from 'yjs' 
 import { WebsocketProvider } from 'y-websocket';
 import { useSession } from 'next-auth/react';
@@ -12,6 +12,7 @@ import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from "motion/react";
 import { RiArchiveDrawerFill } from 'react-icons/ri';
 import TextElement from './TextElement';
+import Konva from 'konva';
 
 interface elementSchema {
     tool: string, 
@@ -36,6 +37,82 @@ interface SignalingMessage {
     audioEnabled?: boolean;
 }
 
+// Editable Text Component
+const EditableText = ({ 
+    shapeProps, 
+    isSelected, 
+    onSelect, 
+    onChange,
+    onDoubleClick 
+}: {
+    shapeProps: any;
+    isSelected: boolean;
+    onSelect: () => void;
+    onChange: (newProps: any) => void;
+    onDoubleClick: () => void;
+}) => {
+    const shapeRef = useRef<Konva.Text>(null);
+    const trRef = useRef<Konva.Transformer>(null);
+
+    useEffect(() => {
+        if (isSelected && trRef.current && shapeRef.current) {
+            trRef.current.nodes([shapeRef.current]);
+            trRef.current.getLayer()?.batchDraw();
+        }
+    }, [isSelected]);
+
+    return (
+        <>
+            <Text
+                {...shapeProps}
+                ref={shapeRef}
+                onClick={onSelect}
+                onTap={onSelect}
+                onDblClick={onDoubleClick}
+                onDblTap={onDoubleClick}
+                draggable
+                onDragEnd={(e) => {
+                    onChange({
+                        ...shapeProps,
+                        x: e.target.x(),
+                        y: e.target.y(),
+                    });
+                }}
+                onTransformEnd={(e) => {
+                    const node = shapeRef.current;
+                    if (!node) return;
+                    
+                    const scaleX = node.scaleX();
+                    const scaleY = node.scaleY();
+
+                    node.scaleX(1);
+                    node.scaleY(1);
+                    
+                    onChange({
+                        ...shapeProps,
+                        x: node.x(),
+                        y: node.y(),
+                        width: Math.max(5, node.width() * scaleX),
+                        fontSize: Math.max(5, shapeProps.fontSize * scaleY),
+                    });
+                }}
+            />
+            {isSelected && (
+                <Transformer
+                    ref={trRef}
+                    flipEnabled={false}
+                    boundBoxFunc={(oldBox, newBox) => {
+                        if (Math.abs(newBox.width) < 5 || Math.abs(newBox.height) < 5) {
+                            return oldBox;
+                        }
+                        return newBox;
+                    }}
+                />
+            )}
+        </>
+    );
+};
+
 const Canvas = ({roomId}: {roomId: string}) => {
     const { data: session, status } = useSession()
     const router = useRouter()
@@ -58,13 +135,24 @@ const Canvas = ({roomId}: {roomId: string}) => {
     const [showParticipants, setShowParticipants] = useState(true)
     const [isConnecting, setIsConnecting] = useState(true)
     
+    // Text editing state
+    const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
+    const [editingTextId, setEditingTextId] = useState<string | null>(null);
+    const [textInputValue, setTextInputValue] = useState('');
+    const [textInputPosition, setTextInputPosition] = useState({ x: 0, y: 0 });
+    const textInputRef = useRef<HTMLTextAreaElement>(null);
+    
     const isPencilDrawing = useRef(false); 
     const isShapeDrawing = useRef(false); 
+    const isTextWriting = useRef({
+        id: "", editing: false
+    })
     const yDocRef = useRef<Y.Doc | null>(null)
     const providerRef = useRef<WebsocketProvider | null>(null)
     const yElementsRef = useRef<Y.Array<elementSchema> | null>(null)
     const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-    const stageRef = useRef(null); 
+    const stageRef = useRef<Konva.Stage>(null); 
+    const layerRef = useRef<Konva.Layer>(null);
     
     // WebRTC refs - Fixed version
     const localStreamRef = useRef<MediaStream | null>(null)
@@ -114,6 +202,14 @@ const Canvas = ({roomId}: {roomId: string}) => {
             initializeMediaAndJoin()
         }
     }, [status, roomId, session])
+
+    // Focus text input when editing
+    useEffect(() => {
+        if (editingTextId && textInputRef.current) {
+            textInputRef.current.focus();
+            textInputRef.current.select();
+        }
+    }, [editingTextId]);
 
     const fetchRoomInfo = async () => {
         try {
@@ -197,7 +293,7 @@ const Canvas = ({roomId}: {roomId: string}) => {
 
     // Setup Yjs and WebRTC signaling
     useEffect(() => {
-        const yDoc = new Y.Doc(); 
+        const yDoc = new Y.Doc();                       //wss://demos.yjs.dev use this in place of localhost:1234, to test if it works online or not; 
         const webSocketProvider = new WebsocketProvider('ws://localhost:1234', `whiteboard-${roomId}`, yDoc); 
         const yElements = yDoc.getArray<elementSchema>("elements"); 
         const ySignaling = yDoc.getMap('webrtc-signaling')
@@ -813,7 +909,113 @@ const Canvas = ({roomId}: {roomId: string}) => {
         yElementsRef.current?.push([element]); 
     }
 
+    // Update element in Yjs
+    const updateElement = useCallback((elementId: string, newProps: any) => {
+        const yElements = yElementsRef.current;
+        if (!yElements) return;
+
+        let elementIndex = -1;
+        for (let i = 0; i < yElements.length; i++) {
+            if (yElements.get(i).props.id === elementId) {
+                elementIndex = i;
+                break;
+            }
+        }
+
+        if (elementIndex === -1) return;
+
+        const element = yElements.get(elementIndex);
+        const updatedElement = {
+            ...element,
+            props: newProps
+        };
+
+        yElements.doc?.transact(() => {
+            yElements.delete(elementIndex);
+            yElements.insert(elementIndex, [updatedElement]);
+        });
+    }, []);
+
+    // Handle text double click to start editing
+    const handleTextDoubleClick = useCallback((elementId: string, currentText: string, x: number, y: number) => {
+        setEditingTextId(elementId);
+        setTextInputValue(currentText);
+        
+        // Get stage position for proper textarea placement
+        const stage = stageRef.current;
+        if (stage) {
+            const stageBox = stage.container().getBoundingClientRect();
+            setTextInputPosition({
+                x: stageBox.left + x,
+                y: stageBox.top + y
+            });
+        }
+    }, []);
+
+    // Handle text input blur or enter to finish editing
+    const handleTextInputComplete = useCallback(() => {
+        if (editingTextId && textInputValue.trim()) {
+            // Find the element and update it
+            const yElements = yElementsRef.current;
+            if (yElements) {
+                let elementIndex = -1;
+                for (let i = 0; i < yElements.length; i++) {
+                    if (yElements.get(i).props.id === editingTextId) {
+                        elementIndex = i;
+                        break;
+                    }
+                }
+
+                if (elementIndex !== -1) {
+                    const element = yElements.get(elementIndex);
+                    const updatedElement = {
+                        ...element,
+                        props: {
+                            ...element.props,
+                            text: textInputValue
+                        }
+                    };
+
+                    yElements.doc?.transact(() => {
+                        yElements.delete(elementIndex);
+                        yElements.insert(elementIndex, [updatedElement]);
+                    });
+                }
+            }
+        } else if (editingTextId && !textInputValue.trim()) {
+            // Remove empty text element
+            const yElements = yElementsRef.current;
+            if (yElements) {
+                let elementIndex = -1;
+                for (let i = 0; i < yElements.length; i++) {
+                    if (yElements.get(i).props.id === editingTextId) {
+                        elementIndex = i;
+                        break;
+                    }
+                }
+                if (elementIndex !== -1) {
+                    yElements.doc?.transact(() => {
+                        yElements.delete(elementIndex);
+                    });
+                }
+            }
+        }
+
+        setEditingTextId(null);
+        setTextInputValue('');
+        setSelectedTextId(null);
+    }, [editingTextId, textInputValue]);
+
     const handleMouseDown = (e: any) => {
+        // Deselect text when clicking on empty area
+        const clickedOnEmpty = e.target === e.target.getStage();
+        if (clickedOnEmpty) {
+            setSelectedTextId(null);
+            if (editingTextId) {
+                handleTextInputComplete();
+            }
+        }
+
         switch(selectedTool) {
             case 'pencil': {
                 isPencilDrawing.current = true; 
@@ -864,8 +1066,44 @@ const Canvas = ({roomId}: {roomId: string}) => {
                 
                 break; 
             }
+            case 'text': {
+                // Only create new text if clicking on empty canvas
+                if (!clickedOnEmpty) return;
+                
+                const point = e.target.getStage().getPointerPosition(); 
+                const elementId = `${myUserIdRef.current}-${Date.now()}`;
+
+                const props = {
+                    id: elementId, 
+                    x: point.x, 
+                    y: point.y, 
+                    fill: "black", 
+                    fontSize: 24, 
+                    fontFamily: "Arial", 
+                    text: "",
+                    width: 200,
+                    align: 'left'
+                }
+
+                handleAddElement({tool: selectedTool, props}); 
+                
+                // Immediately start editing the new text
+                setTimeout(() => {
+                    handleTextDoubleClick(elementId, '', point.x, point.y);
+                }, 50);
+                break; 
+            }
         }   
     }
+
+    useEffect(() => {
+
+        if (!isTextWriting.current.id || !isTextWriting.current.editing || !layerRef.current) return; 
+
+        const selectTextBeingEdited = layerRef.current.findOne(`#${isTextWriting.current.id}`); 
+        
+
+    }, [isTextWriting])
 
     const handleMouseMove = (e: any) => {
         const yElements = yElementsRef.current
@@ -1316,6 +1554,45 @@ const Canvas = ({roomId}: {roomId: string}) => {
                 </div>
             </motion.div>
 
+            {/* Text Input Overlay for editing */}
+            {editingTextId && (
+                <textarea
+                    ref={textInputRef}
+                    value={textInputValue}
+                    onChange={(e) => setTextInputValue(e.target.value)}
+                    onBlur={handleTextInputComplete}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Escape') {
+                            handleTextInputComplete();
+                        }
+                        // Allow multi-line with Shift+Enter, complete with Enter
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            handleTextInputComplete();
+                        }
+                    }}
+                    style={{
+                        position: 'fixed',
+                        left: textInputPosition.x,
+                        top: textInputPosition.y,
+                        zIndex: 100,
+                        minWidth: '200px',
+                        minHeight: '30px',
+                        padding: '4px 8px',
+                        fontSize: '24px',
+                        fontFamily: 'Arial',
+                        border: '2px solid #3b82f6',
+                        borderRadius: '4px',
+                        outline: 'none',
+                        background: 'white',
+                        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                        resize: 'both',
+                    }}
+                    placeholder="Type here..."
+                    autoFocus
+                />
+            )}
+
             {/* Canvas */}
             <div className={`pt-20 ${isTextElementVisible ? "ml-40" : "ml-0"} transition-all duration-100 ease-linear`}>
                 <Stage 
@@ -1324,10 +1601,9 @@ const Canvas = ({roomId}: {roomId: string}) => {
                     onMouseDown={handleMouseDown} 
                     width={dimensions.width} 
                     height={dimensions.height}
-                    
                     ref={stageRef}
                 >
-                    <Layer>
+                    <Layer ref={layerRef}>
                         {elements.map((item, i) => {
                             switch(item.tool) {
                                 case 'pencil':
@@ -1367,16 +1643,47 @@ const Canvas = ({roomId}: {roomId: string}) => {
                                 }
                                 case 'arrow': {
                                     return <Arrow 
-                                    key={i}
-                                    id={item.props.id}
-                                    x={item.props.x}
-                                    y={item.props.y}
-                                    stroke={item.props.stroke}
-                                    pointerWidth={item.props.pointerWidth}
-                                    pointerLength={item.props.pointerLength}
-                                    points={item.props.points}
+                                        key={i}
+                                        id={item.props.id}
+                                        x={item.props.x}
+                                        y={item.props.y}
+                                        stroke={item.props.stroke}
+                                        pointerWidth={item.props.pointerWidth}
+                                        pointerLength={item.props.pointerLength}
+                                        points={item.props.points}
                                     />
                                 }
+                                case 'text': {
+                                    if (editingTextId === item.props.id) {
+                                        return null;
+                                    }
+                                    
+                                    return (
+                                        <EditableText
+                                            key={i}
+                                            shapeProps={item.props}
+                                            isSelected={selectedTextId === item.props.id}
+                                            onSelect={() => {
+                                                if (selectedTool === 'text' || selectedTool === 'select') {
+                                                    setSelectedTextId(item.props.id);
+                                                }
+                                            }}
+                                            onChange={(newProps) => {
+                                                updateElement(item.props.id, newProps);
+                                            }}
+                                            onDoubleClick={() => {
+                                                handleTextDoubleClick(
+                                                    item.props.id,
+                                                    item.props.text || '',
+                                                    item.props.x,
+                                                    item.props.y
+                                                );
+                                            }}
+                                        />
+                                    );
+                                }
+                                default:
+                                    return null;
                             }
                         })}
                     </Layer>
