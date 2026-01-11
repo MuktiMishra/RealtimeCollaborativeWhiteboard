@@ -23,7 +23,7 @@
     "livekit-client": "^2.15.8",
     "lucide-react": "^0.545.0",
     "motion": "^12.23.22",
-    "next": "15.5.4",
+    "next": "15.5.9",
     "next-auth": "^4.24.11",
     "peerjs": "^1.5.5",
     "prisma": "^6.17.1",
