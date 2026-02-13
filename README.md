@@ -1,6 +1,6 @@
 Collaborative Whiteboard
 
-A real-time collaborative whiteboard built with Next.js, React Konva, Yjs, y-websocket, shadcn/ui, and Framer Motion. This project enables multiple users to draw, sketch, and interact on a shared canvas with seamless synchronization.
+A real-time collaborative whiteboard built with React.js, React Konva, Yjs, y-websocket, shadcn/ui, and Framer Motion. This project enables multiple users to draw, sketch, and interact on a shared canvas with seamless synchronization.
 
 ⸻
 
